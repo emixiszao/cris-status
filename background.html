@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Cris Status - segundo plano</title>
+</head>
+<body>
+<script type="module">
+// Roda escondido, sempre que a extensão está instalada.
+// Mestre: transmite a câmera. Jogador com "Seguir" ligado: acompanha a câmera do mestre.
+import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3";
+
+const SEGUIR_KEY = "com.cris.status/seguir";
+const CANAL = "com.cris.status/camera";
+const INTERVALO_MS = 100;     // quantas vezes por segundo o mestre é lido
+const BATIMENTO_MS = 1000;    // reenvia mesmo parado, para quem acabou de ligar o Seguir
+
+let isGM = false;
+let seguindo = false;
+const idsMestre = new Set();
+
+// ---------- câmera ----------
+async function lerCamera() {
+  const [pos, escala, W, H] = await Promise.all([
+    OBR.viewport.getPosition(), OBR.viewport.getScale(),
+    OBR.viewport.getWidth(), OBR.viewport.getHeight()
+  ]);
+  // centro e tamanho da área visível, em coordenadas da cena (independe do tamanho da janela)
+  return { cx: (W / 2 - pos.x) / escala, cy: (H / 2 - pos.y) / escala, w: W / escala, h: H / escala };
+}
+
+// ---------- lado do mestre ----------
+let ultimaChave = "", ultimoEnvio = 0, lendo = false;
+async function tickMestre() {
+  if (!isGM || lendo) return;
+  lendo = true;
+  try {
+    const c = await lerCamera();
+    const chave = [c.cx, c.cy, c.w, c.h].map(n => n.toFixed(1)).join("|");
+    const agora = Date.now();
+    if (chave !== ultimaChave || agora - ultimoEnvio > BATIMENTO_MS) {
+      ultimaChave = chave;
+      ultimoEnvio = agora;
+      await OBR.broadcast.sendMessage(CANAL, c);
+    }
+  } catch (e) { /* tenta de novo no próximo ciclo */ }
+  finally { lendo = false; }
+}
+
+// ---------- lado do jogador ----------
+let aplicando = false, pendente = null;
+async function aplicar(c) {
+  if (aplicando) { pendente = c; return; }
+  aplicando = true;
+  try {
+    const [W, H, pos, esc] = await Promise.all([
+      OBR.viewport.getWidth(), OBR.viewport.getHeight(),
+      OBR.viewport.getPosition(), OBR.viewport.getScale()
+    ]);
+    const s = Math.min(W / c.w, H / c.h);                       // mostra pelo menos a mesma área do mestre
+    const alvo = { x: W / 2 - c.cx * s, y: H / 2 - c.cy * s };
+    const dx = Math.abs(alvo.x - pos.x), dy = Math.abs(alvo.y - pos.y), dEsc = Math.abs(Math.log(s / esc));
+    if (dx < 1 && dy < 1 && dEsc < 0.002) return;               // já está no lugar
+    const salto = dx > W * 0.6 || dy > H * 0.6 || dEsc > 0.3;   // troca de cena/zoom grande: anima
+    if (salto && OBR.viewport.animateTo) {
+      await OBR.viewport.animateTo({ position: alvo, scale: s });
+    } else {
+      await OBR.viewport.setScale(s);
+      await OBR.viewport.setPosition(alvo);
+    }
+  } catch (e) { /* ignora */ }
+  finally {
+    aplicando = false;
+    if (pendente) { const p = pendente; pendente = null; aplicar(p); }
+  }
+}
+
+const valido = c => c && ["cx", "cy", "w", "h"].every(k => Number.isFinite(c[k])) && c.w > 0 && c.h > 0;
+
+async function atualizarMestres() {
+  const jogadores = await OBR.party.getPlayers();
+  idsMestre.clear();
+  jogadores.filter(p => p.role === "GM").forEach(p => idsMestre.add(p.connectionId));
+}
+
+OBR.onReady(async () => {
+  isGM = (await OBR.player.getRole()) === "GM";
+  seguindo = !!(await OBR.player.getMetadata())[SEGUIR_KEY];
+  await atualizarMestres();
+
+  OBR.player.onChange(p => { isGM = p.role === "GM"; seguindo = !!p.metadata?.[SEGUIR_KEY]; });
+  OBR.party.onChange(atualizarMestres);
+
+  OBR.broadcast.onMessage(CANAL, evento => {
+    if (isGM || !seguindo || !valido(evento.data)) return;
+    // só aceita câmera vinda de um mestre
+    const deMestre = evento.connectionId ? idsMestre.has(evento.connectionId) : idsMestre.size > 0;
+    if (deMestre) aplicar(evento.data);
+  });
+
+  setInterval(tickMestre, INTERVALO_MS);
+});
+</script>
+</body>
+</html>
