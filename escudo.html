@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escudo do mestre</title>
+<style>
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:#14121a; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  body { display:flex; flex-direction:column; }
+  header { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; background:#1d1a26; border-bottom:1px solid #322c42; }
+  header b { flex:1; font-size:13px; color:#ece8f2; }
+  button, a.btn { border:0; border-radius:6px; padding:5px 10px; background:#2e2840; color:#ece8f2; font-size:12px; font-weight:600;
+                  text-decoration:none; cursor:pointer; }
+  button:hover, a.btn:hover { filter:brightness(1.25); }
+  button.fechar { background:#7d2630; }
+  iframe { flex:1; width:100%; border:0; background:#fff; }
+</style>
+</head>
+<body>
+  <header>
+    <b>Escudo do mestre</b>
+    <a class="btn" id="aba" target="_blank" rel="noopener">Nova aba</a>
+    <button class="fechar" id="fechar">Fechar</button>
+  </header>
+  <iframe id="site" title="Escudo do mestre (CRIS)"></iframe>
+
+<script type="module">
+import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3";
+
+const URL_ESCUDO = "https://crisordemparanormal.com/escudo-do-mestre/cHQp2BITww8KzWOd5Pbe";
+const POPOVER_ID = "com.cris.status/escudo";
+
+document.getElementById("site").src = URL_ESCUDO;
+document.getElementById("aba").href = URL_ESCUDO;
+
+OBR.onReady(() => {
+  document.getElementById("fechar").addEventListener("click", () => OBR.popover.close(POPOVER_ID));
+});
+</script>
+</body>
+</html>
