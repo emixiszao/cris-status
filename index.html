@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cris Status</title>
+<style>
+  :root { --bg:#14121a; --panel:#1d1a26; --line:#322c42; --text:#ece8f2; --muted:#9a93ad; --accent:#7a5cd6;
+          --pv:#d23a45; --san:#4a90d9; --pe:#e0ac48; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:12px; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:13px; }
+  button, input { font:inherit; }
+  button { border:0; border-radius:7px; padding:7px 10px; background:#2e2840; color:var(--text); font-weight:600; cursor:pointer; }
+  button:hover { filter:brightness(1.25); }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  button.principal { background:var(--accent); }
+  button.perigo { background:#7d2630; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:8px; }
+  h1 { margin:0; font-size:15px; }
+  .papel { font-size:11px; color:var(--muted); }
+  .lista { display:grid; gap:10px; }
+  .item { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .topo { display:flex; align-items:center; gap:10px; }
+  .mini { width:46px; height:46px; flex:none; border-radius:8px; overflow:hidden; background:#2b2538; display:flex; align-items:center;
+          justify-content:center; font-weight:700; color:#6d6288; font-size:20px; }
+  .mini img { width:100%; height:100%; object-fit:cover; }
+  .info { flex:1; min-width:0; }
+  .info b { display:block; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .resumo { display:flex; gap:10px; margin-top:3px; font-variant-numeric:tabular-nums; font-weight:600; }
+  .acoes { display:flex; flex-direction:column; gap:5px; }
+  .editor { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); display:grid; gap:12px; }
+  .campo { display:grid; gap:4px; }
+  .campo label { font-size:11px; color:var(--muted); }
+  input[type=text], input[type=number] { width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:#12101a; color:var(--text); }
+  .valores { display:flex; align-items:center; gap:6px; }
+  .valores input { width:64px; text-align:center; }
+  .valores span { color:var(--muted); }
+  .valores strong { margin-right:auto; }
+  .passos { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; margin-top:5px; }
+  .passos button { padding:6px 0; background:#2a2439; }
+  .passos button.menos { background:#3b2430; }
+  .passos button.mais { background:#223347; }
+  .linha { display:flex; gap:6px; flex-wrap:wrap; }
+  .vazio { color:var(--muted); text-align:center; padding:28px 12px; line-height:1.5; }
+  /* jogadores: painel bem pequeno, só rolar e achar o agente */
+  body.jogador { padding:8px; font-size:12px; }
+  body.jogador header { margin-bottom:8px; }
+  body.jogador h1 { font-size:13px; }
+  body.jogador .papel { display:none; }
+  body.jogador .lista { gap:5px; }
+  body.jogador .item { padding:5px 7px; border-radius:8px; }
+  body.jogador .topo { gap:8px; }
+  body.jogador .mini { width:30px; height:30px; font-size:14px; }
+  body.jogador .resumo { display:none; }
+  body.jogador .info b { font-size:13px; }
+  body.jogador button { padding:5px 9px; }
+  .c-pv { color:var(--pv); } .c-san { color:var(--san); } .c-pe { color:var(--pe); }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Quadros dos personagens</h1>
+      <div class="papel" id="papel"></div>
+    </div>
+    <div class="linha">
+      <button id="cris" hidden>Abrir CRIS</button>
+      <button id="calc" hidden>Calculadora</button>
+      <button class="principal" id="novo" hidden>Novo personagem</button>
+    </div>
+  </header>
+  <div class="lista" id="lista"></div>
+
+<script type="module">
+import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3";
+
+const KEY = "com.cris.status/data";
+const MODAL_ID = "com.cris.status/card";
+const ESCUDO_ID = "com.cris.status/escudo";
+const ESCUDO_LARGURA = 580;
+
+// Calculadora: aparece logo abaixo do painel de edição do mestre (altura do painel = 620).
+const CALC_ID = "com.cris.status/calculadora";
+const CALC_ESQUERDA = 72;   // distância da borda esquerda da tela (px)
+const CALC_TOPO = 636;      // logo abaixo do painel de edição (px)
+const CALC_LARGURA = 420;
+const CALC_ALTURA_MIN = 320;
+const STATS = [
+  { k: "pv",  nome: "Vida",     curto: "PV",  cls: "c-pv" },
+  { k: "san", nome: "Sanidade", curto: "SAN", cls: "c-san" },
+  { k: "pe",  nome: "Esforço",  curto: "PE",  cls: "c-pe" }
+];
+const PASSOS = [-10, -5, -1, 1, 5, 10];
+
+let personagens = [];
+let isGM = false;
+const abertos = new Set();
+let removendo = null;
+
+// Mestre: painel grande. Jogador: painel pequeno (a lista rola).
+function ajustarJanela() {
+  OBR.action.setWidth(isGM ? 420 : 280);
+  OBR.action.setHeight(isGM ? 620 : 280);
+}
+
+const el = (tag, props = {}, ...filhos) => {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  filhos.forEach(f => e.append(f));
+  return e;
+};
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const inteiro = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
+
+// ---------- salvar (somente mestre) ----------
+async function salvar(mutar) {
+  if (!isGM) return;
+  try {
+    const meta = await OBR.room.getMetadata();
+    const lista = structuredClone(meta[KEY]?.personagens ?? []);
+    mutar(lista);
+    await OBR.room.setMetadata({ [KEY]: { personagens: lista } });
+  } catch (e) {
+    OBR.notification.show("Não foi possível salvar: " + (e?.message ?? e), "ERROR");
+  }
+}
+const achar = (lista, id) => lista.find(p => p.id === id);
+
+const novoPersonagem = () => ({
+  id: crypto.randomUUID(),
+  nome: "Novo personagem",
+  imagem: "",
+  pv:  { atual: 10, max: 10 },
+  san: { atual: 10, max: 10 },
+  pe:  { atual: 10, max: 10 }
+});
+
+function ajustar(id, k, delta) {
+  salvar(l => { const d = achar(l, id)?.[k]; if (d) d.atual = clamp(d.atual + delta, 0, d.max); });
+}
+function definirAtual(id, k, v) {
+  salvar(l => { const d = achar(l, id)?.[k]; if (d) d.atual = clamp(v, 0, d.max); });
+}
+function definirMax(id, k, v) {
+  salvar(l => { const d = achar(l, id)?.[k]; if (d) { d.max = Math.max(1, v); d.atual = Math.min(d.atual, d.max); } });
+}
+
+async function escolherFoto(id) {
+  try {
+    const imagens = await OBR.assets.downloadImages(false);
+    const url = imagens?.[0]?.image?.url;
+    if (url) salvar(l => { const p = achar(l, id); if (p) p.imagem = url; });
+  } catch (e) {
+    OBR.notification.show("Não foi possível abrir a biblioteca.", "ERROR");
+  }
+}
+
+// ---------- mostrar quadro (somente na tela de quem clicou) ----------
+async function mostrar(id) {
+  try {
+    await OBR.modal.close(MODAL_ID).catch(() => {});
+    await OBR.modal.open({
+      id: MODAL_ID,
+      url: new URL("card.html?id=" + encodeURIComponent(id), location.href).href,
+      width: 380,
+      height: 500,
+      hideBackdrop: true,
+      hidePaper: true,
+      disablePointerEvents: true
+    });
+  } catch (e) {
+    OBR.notification.show("Não foi possível mostrar o quadro.", "ERROR");
+  }
+}
+
+// ---------- interface ----------
+function miniatura(p) {
+  const m = el("div", { className: "mini" });
+  if (p.imagem) m.append(el("img", { src: p.imagem, alt: "" }));
+  else m.textContent = (p.nome || "?").trim().charAt(0).toUpperCase();
+  return m;
+}
+
+function editor(p) {
+  const e = el("div", { className: "editor" });
+
+  const nome = el("input", { type: "text", value: p.nome, maxLength: 40 });
+  nome.addEventListener("change", () => salvar(l => { const x = achar(l, p.id); if (x) x.nome = nome.value.trim() || "Sem nome"; }));
+  e.append(el("div", { className: "campo" }, el("label", { textContent: "Nome" }), nome));
+
+  STATS.forEach(s => {
+    const d = p[s.k];
+    const atual = el("input", { type: "number", min: 0, value: d.atual });
+    const max = el("input", { type: "number", min: 1, value: d.max });
+    atual.addEventListener("change", () => definirAtual(p.id, s.k, inteiro(atual.value)));
+    max.addEventListener("change", () => definirMax(p.id, s.k, inteiro(max.value)));
+
+    const passos = el("div", { className: "passos" });
+    PASSOS.forEach(n => {
+      const b = el("button", { className: n < 0 ? "menos" : "mais", textContent: (n > 0 ? "+" : "−") + Math.abs(n) });
+      b.addEventListener("click", () => ajustar(p.id, s.k, n));
+      passos.append(b);
+    });
+
+    e.append(el("div", { className: "campo" },
+      el("div", { className: "valores" },
+        el("strong", { className: s.cls, textContent: s.nome }),
+        atual, el("span", { textContent: "/" }), max),
+      passos));
+  });
+
+  const foto = el("button", { textContent: p.imagem ? "Trocar foto (biblioteca)" : "Escolher foto (biblioteca)" });
+  foto.addEventListener("click", () => escolherFoto(p.id));
+
+  const remover = el("button", { className: "perigo", textContent: removendo === p.id ? "Confirmar remoção" : "Remover personagem" });
+  remover.addEventListener("click", () => {
+    if (removendo !== p.id) { removendo = p.id; render(); return; }
+    removendo = null;
+    abertos.delete(p.id);
+    salvar(l => { const i = l.findIndex(x => x.id === p.id); if (i >= 0) l.splice(i, 1); });
+  });
+
+  e.append(el("div", { className: "linha" }, foto, remover));
+  return e;
+}
+
+function render() {
+  document.body.classList.toggle("jogador", !isGM);
+  document.getElementById("papel").textContent = isGM ? "Você é o mestre: pode editar." : "Somente visualização.";
+  document.getElementById("novo").hidden = !isGM;
+  document.getElementById("cris").hidden = !isGM;
+  document.getElementById("calc").hidden = !isGM;
+
+  const lista = document.getElementById("lista");
+  if (!personagens.length) {
+    lista.replaceChildren(el("div", { className: "vazio", textContent: isGM
+      ? "Nenhum personagem ainda. Use “Novo personagem” para criar o primeiro."
+      : "O mestre ainda não adicionou personagens." }));
+    return;
+  }
+
+  lista.replaceChildren(...personagens.map(p => {
+    const resumo = el("div", { className: "resumo" },
+      ...STATS.map(s => el("span", { className: s.cls, textContent: `${s.curto} ${p[s.k].atual}/${p[s.k].max}` })));
+
+    const mostrarBtn = el("button", { className: "principal", textContent: "Mostrar" });
+    mostrarBtn.addEventListener("click", () => mostrar(p.id));
+    const acoes = el("div", { className: "acoes" }, mostrarBtn);
+
+    if (isGM) {
+      const aberto = abertos.has(p.id);
+      const editarBtn = el("button", { textContent: aberto ? "Fechar" : "Editar" });
+      editarBtn.addEventListener("click", () => {
+        aberto ? abertos.delete(p.id) : abertos.add(p.id);
+        removendo = null;
+        render();
+      });
+      acoes.append(editarBtn);
+    }
+
+    const item = el("div", { className: "item" },
+      el("div", { className: "topo" }, miniatura(p),
+        el("div", { className: "info" }, el("b", { textContent: p.nome }), resumo), acoes));
+    if (isGM && abertos.has(p.id)) item.append(editor(p));
+    return item;
+  }));
+}
+
+// ---------- escudo do mestre: painel lateral, altura total (somente mestre) ----------
+async function abrirEscudo() {
+  if (!isGM) return;
+  try {
+    const [W, H] = await Promise.all([OBR.viewport.getWidth(), OBR.viewport.getHeight()]);
+    await OBR.popover.close(ESCUDO_ID).catch(() => {});
+    await OBR.popover.open({
+      id: ESCUDO_ID,
+      url: new URL("escudo.html", location.href).href,
+      width: Math.min(ESCUDO_LARGURA, W - 16),
+      height: H - 16,
+      anchorReference: "POSITION",
+      anchorPosition: { left: W - 8, top: 8 },
+      transformOrigin: { horizontal: "RIGHT", vertical: "TOP" },
+      marginThreshold: 8,
+      disableClickAway: true
+    });
+  } catch (e) {
+    OBR.notification.show("Não foi possível abrir o CRIS.", "ERROR");
+  }
+}
+document.getElementById("cris").addEventListener("click", abrirEscudo);
+
+// ---------- calculadora: popover logo abaixo do painel de edição (somente mestre) ----------
+async function abrirCalculadora() {
+  if (!isGM) return;
+  try {
+    const H = await OBR.viewport.getHeight();
+    await OBR.popover.close(CALC_ID).catch(() => {});
+    await OBR.popover.open({
+      id: CALC_ID,
+      url: new URL("calculadora.html", location.href).href,
+      width: CALC_LARGURA,
+      height: Math.max(CALC_ALTURA_MIN, H - CALC_TOPO - 8),
+      anchorReference: "POSITION",
+      anchorPosition: { left: CALC_ESQUERDA, top: CALC_TOPO },
+      transformOrigin: { horizontal: "LEFT", vertical: "TOP" },
+      marginThreshold: 8,
+      disableClickAway: true
+    });
+  } catch (e) {
+    OBR.notification.show("Não foi possível abrir a calculadora.", "ERROR");
+  }
+}
+document.getElementById("calc").addEventListener("click", abrirCalculadora);
+
+document.getElementById("novo").addEventListener("click", () => {
+  const p = novoPersonagem();
+  abertos.add(p.id);
+  salvar(l => l.push(p));
+});
+
+OBR.onReady(async () => {
+  isGM = (await OBR.player.getRole()) === "GM";
+  ajustarJanela();
+  OBR.player.onChange(pl => {
+    const gm = pl.role === "GM";
+    if (gm !== isGM) { isGM = gm; ajustarJanela(); render(); }
+  });
+  const meta = await OBR.room.getMetadata();
+  personagens = meta[KEY]?.personagens ?? [];
+  render();
+  OBR.room.onMetadataChange(m => { personagens = m[KEY]?.personagens ?? []; render(); });
+});
+</script>
+</body>
+</html>
