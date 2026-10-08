@@ -1,0 +1,15 @@
+{
+  "name": "Cris Status - Ordem Paranormal",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "description": "Quadros de Vida, Sanidade e Esforço dos personagens, exibidos dentro do Owlbear por 10 segundos.",
+  "author": "Cris",
+  "icon": "https://emixiszao.github.io/cris-status/icon.svg",
+  "action": {
+    "title": "Status",
+    "icon": "https://emixiszao.github.io/cris-status/icon.svg",
+    "popover": "https://emixiszao.github.io/cris-status/index.html",
+    "width": 420,
+    "height": 620
+  }
+}
